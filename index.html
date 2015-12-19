@@ -1,0 +1,71 @@
+<html>
+  <head>
+    <title>Device Sync Game</title>
+    <style>* {margin: 0;} canvas { width: 100% !important; height: 100% !important }</style>
+    <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+  </head>
+  <body>
+    <div id="roomID"></div>
+    <input type="text" id="roomName">
+    <input id="createRoom" type="button" value="create" onclick="createRoom();" />
+    <input id="joinRoom" type="button" value="join" onclick="joinRoom();" />
+    <script>
+      $( document ).ready(function() {
+          connect();
+          
+          document.getElementById("createRoom").onclick = function () {
+            createRoom();
+          };
+          
+          document.getElementById("joinRoom").onclick = function () {
+            joinRoom(document.getElementById("roomName").value, false);
+          };
+      });
+      
+      var socket;
+      
+      function connect()
+      {
+          /*global io*/
+          socket = io.connect('https://devicesync-turtlesoup.c9users.io');
+      }
+      
+      function createRoom()
+      {
+          socket.on('onRoomCreated', function (data) {
+            if(data.rid)
+            {
+              joinRoom(data.rid, true);
+            }
+            else
+            {
+              alert("failed to create session: Please refresh and try again.");
+            }
+          });
+          
+          socket.emit('createRoom');
+      }
+      
+      function joinRoom(id, host)
+      {
+          window.location = "game/?rid="+id+'&h='+host.toString()+"&pid="+generatePlayerID();
+      }
+      
+      function generatePlayerID()
+      {
+        var text = "";
+        var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        var possibleLength = possible.length;
+    
+        for( var charIndex = 0; charIndex < 10; charIndex++ )
+        {
+            text += possible.charAt(Math.floor(Math.random() * possibleLength));
+        }
+        
+        return text;
+      }
+
+    </script>
+  </body>
+<html>

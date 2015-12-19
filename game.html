@@ -1,0 +1,580 @@
+<html>
+  <head>
+    <title>Device Sync Game</title>
+    <style>* {margin: 0;} canvas { width: 100% !important; height: 100% !important }</style>
+    <script src="https://code.jquery.com/jquery-1.9.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crafty/0.7.0/crafty-min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+  </head>
+  <body>
+    <script>
+    
+        /*global Crafty*/
+        /*global io*/
+        /*global socket*/
+
+        var playerID;
+        var playerIDs = new Array();
+        var roomID;
+        var playerPos;
+        var isHost = false;
+        var gameStarted = false;
+        var loadedAssets = false;
+        
+        var socket;
+        
+        var player1Score = 0;
+        var player2Score = 0;
+        var player3Score = 0;
+        
+        var player1Turning = false;
+        var player2Turning = false;
+        var player3Turning = false;
+        
+        var player1Angle = 0;
+        var player2Angle = 0;
+        var player3Angle = 0;
+    
+        $( document ).ready(function() {
+            
+            var query = window.location.search.substring(1);
+            var queryVars = query.split('&');
+            var queryVarDict = {};
+            for (var queryIndex = 0; queryIndex < queryVars.length; queryIndex++)
+            {
+                var pair = queryVars[queryIndex].split("=");
+                queryVarDict[pair[0]] = decodeURIComponent(pair[1]);
+            }
+            
+            isHost = queryVarDict["h"] == "true";
+            roomID = queryVarDict["rid"];
+            playerID = queryVarDict["pid"];
+            
+            connect();
+            startGame();
+        });
+        
+        function connect()
+        {
+            socket = io.connect('https://devicesync-turtlesoup.c9users.io');
+        }
+        
+        function startGame()
+        {
+            Crafty.init();
+            Crafty.defineScene("hostRoomScene", initHostRoomScreen);
+            Crafty.defineScene("hostGameScene", initHostGameScreen);
+            Crafty.defineScene("clientRoomScene", initClientRoomScreen);
+            Crafty.defineScene("clientGameScene", initClientGameScreen);
+            Crafty.defineScene("hostWinScene", initHostWinScreen);
+            
+            //if we are the host then we want to add our own id to the playerIDs list.
+            if(isHost)
+            {
+                playerIDs.push(playerID);
+            }
+            
+            socket.emit('joinRoom', {rid : roomID, pid: playerID});
+            
+            if(isHost)
+            {
+                //if we are host then we want to update the list when a new player joins
+                //and dispatch and update to all players with the updated playerIDs list.
+                socket.on('playerJoined', onPlayerJoined);
+                
+                //initialise the game scene
+                Crafty.enterScene("hostRoomScene", roomID);
+            }
+            else
+            {
+                //if we are not the host, we simply want to listen for when the
+                //player list is updated and update our internal list accordingly.
+                socket.on('playerListUpdated', onPlayerListUpdated);
+                
+                //initialise the game scene
+                Crafty.enterScene("clientRoomScene", roomID);
+            }
+            
+            var assetsObj = {
+                            "sprites": {
+                                "/buttons_all.png": {
+                                    "tile": 640,
+                                    "tileh": 640,
+                                    "map": {
+                                        "button_green_up": [0,0], "button_green_down": [1,0],
+                                        "button_blue_up": [0,1], "button_blue_down": [1,1],
+                                        "button_red_up": [0,2], "button_red_down": [1,2]
+                                    }
+                                },
+                                
+                                "/game.png": {
+                                    "tile": 64,
+                                    "tileh": 64,
+                                    "map": {
+                                        "player_green": [0,0], "player_blue": [2,0], "player_red": [4,0], "collectable": [6,0],
+                                    }
+                                }
+                            }
+                        };
+
+            Crafty.load(assetsObj, // preload assets
+                function() { //when loaded
+                    loadedAssets = true;
+                    //alert("loading complete");
+                },
+            
+                function(e) { //progress
+                },
+            
+                function(e) { //uh oh, error loading
+                //alert("loading failed");
+                }
+            );
+            
+            socket.on('gameStarted', onGameStarted);
+        }
+        
+        function onPlayerJoined(data)
+        {
+            if(playerIDs.indexOf(data.pid) == -1)
+            {
+                playerIDs.push(data.pid);
+                socket.emit('updatePlayerList', {rid: roomID, pids: playerIDs});
+            }
+            
+            //TEMP
+            /*
+            if(playerIDs.length >= 2)
+            {
+                socket.emit('startGame', {rid: roomID});
+                onGameStarted({});
+            }
+            */
+        }
+        
+        function onPlayerListUpdated(data)
+        {
+            playerIDs = data.pids;
+        }
+        
+        function onGameStarted(data)
+        {
+            socket.removeListener('gameStarted', onGameStarted);
+            
+            if(isHost)
+            {
+                socket.removeListener('playerJoined', onPlayerJoined);
+            }
+            else
+            {
+                socket.removeListener('playerListUpdated', onPlayerListUpdated);
+            }
+            
+            if(isHost)
+            {
+                player1Score = 0;
+                player2Score = 0;
+                player3Score = 0;
+                
+                player1Turning = false;
+                player2Turning = false;
+                player3Turning = false;
+                
+                player1Angle = 0;
+                player2Angle = 0;
+                player3Angle = 0;
+                
+                //initialise the host game scene
+                Crafty.enterScene("hostGameScene", roomID);
+            }
+            else
+            {
+                //set the player pos
+                playerPos = playerIDs.indexOf(playerID);
+                
+                //initialise the client game scene
+                Crafty.enterScene("clientGameScene", roomID);
+            }
+            
+            gameStarted = true;
+        }
+        
+        /****************/
+        /*     host     */
+        /****************/
+        
+        function initHostRoomScreen(rid)
+        {
+            var roomIDText = Crafty.e("2D, Canvas, Text").attr({ x: 0, y: 0 })
+            .text(roomID)
+            .textFont({ size: '20px', weight: 'bold' });
+            
+            var playerCountText = Crafty.e("2D, Canvas, Text").attr({ x: 100, y: 100 })
+            .text("connected players: "+(playerIDs.length - 1).toString()+" / 3")
+            .textFont({ size: '20px', weight: 'bold' });
+            
+            playerCountText.requires('Keyboard').bind('KeyDown', function () {
+                if(playerIDs.length >= 2)
+                {
+                    socket.removeListener('playerJoined', updatePlayerCountText);
+                    socket.emit('startGame', {rid: roomID});
+                    onGameStarted({});
+                }
+            });
+            
+            var updatePlayerCountText = function(data) {
+                playerCountText.text("connected players: "+(playerIDs.length - 1).toString()+" / 3")
+            };
+                
+            socket.on('playerJoined', updatePlayerCountText);
+        }
+
+        function initHostGameScreen(rid)
+        {
+            Crafty.background('url(/bg.png) repeat');
+            //Crafty.background('#273094');
+            
+            var scorePlayer1Text = Crafty.e("2D, Canvas, Text").attr({ x: 0, y: 0 })
+            .text("Green: "+player1Score)
+            .textColor('#00FF00')
+            .textFont({ size: '20px', weight: 'bold' });
+            
+            var scorePlayer2Text = Crafty.e("2D, Canvas, Text").attr({ x: 100, y: 0 })
+            .text("Blue: "+player2Score)
+            .textColor('#0022FF')
+            .textFont({ size: '20px', weight: 'bold' });
+            
+            var scorePlayer3Text = Crafty.e("2D, Canvas, Text").attr({ x: 200, y: 0 })
+            .text("Red: "+player3Score)
+            .textColor('#FF0000')
+            .textFont({ size: '20px', weight: 'bold' });
+            
+            var player1 = Crafty.e("Player1, 2D, Canvas, player_green")
+                .attr({x:100, y:Crafty.viewport._height*0.25})
+                .origin("center")
+                .bind("EnterFrame", function(eventData) {
+                    
+                    if(player1Turning)
+                    {
+                        player1Angle += 0.01;
+                    }
+                    
+                    var speed = 200 * (eventData.dt / 1000);
+
+                    this.x = this.x + (speed * Math.cos(player1Angle));
+                    this.y = this.y + (speed * Math.sin(player1Angle));
+                    this.rotation = player1Angle * (180/Math.PI);
+                    
+                    if(this.x > Crafty.viewport._width)
+                    {
+                        this.x = 0;
+                    }
+                    else if(this.x < 0)
+                    {
+                        this.x = Crafty.viewport._width;
+                    }
+                    
+                    if(this.y > Crafty.viewport._height)
+                    {
+                        this.y = 0;
+                    }
+                    else if(this.y < 0)
+                    {
+                        this.y = Crafty.viewport._height;
+                    }
+                  });
+            
+            var player2= Crafty.e("Player2, 2D, Canvas, player_blue")
+                .attr({x:100, y:Crafty.viewport._height*0.5})
+                .origin("center")
+                .bind("EnterFrame", function(eventData) {
+                    
+                    if(player2Turning)
+                    {
+                        player2Angle += 0.01;
+                    }
+                    
+                    var speed = 200 * (eventData.dt / 1000);
+                    
+                    this.x = this.x + (speed * Math.cos(player2Angle));
+                    this.y = this.y + (speed * Math.sin(player2Angle));
+                    this.rotation = player2Angle * (180/Math.PI);
+                    
+                    if(this.x > Crafty.viewport._width)
+                    {
+                        this.x = 0;
+                    }
+                    else if(this.x < 0)
+                    {
+                        this.x = Crafty.viewport._width;
+                    }
+                    
+                    if(this.y > Crafty.viewport._height)
+                    {
+                        this.y = 0;
+                    }
+                    else if(this.y < 0)
+                    {
+                        this.y = Crafty.viewport._height;
+                    }
+                  });
+                
+            var player3 = Crafty.e("Player3, 2D, Canvas, player_red")
+                .attr({x:100, y:Crafty.viewport._height*0.75})
+                .origin("center")
+                .bind("EnterFrame", function(eventData) {
+                    
+                    if(player3Turning)
+                    {
+                        player3Angle += 0.01;
+                    }
+                    
+                    var speed = 200 * (eventData.dt / 1000);
+                    
+                    this.x = this.x + (speed * Math.cos(player3Angle));
+                    this.y = this.y + (speed * Math.sin(player3Angle));
+                    this.rotation = player3Angle * (180/Math.PI);
+                    
+                    if(this.x > Crafty.viewport._width)
+                    {
+                        this.x = 0;
+                    }
+                    else if(this.x < 0)
+                    {
+                        this.x = Crafty.viewport._width;
+                    }
+                    
+                    if(this.y > Crafty.viewport._height)
+                    {
+                        this.y = 0;
+                    }
+                    else if(this.y < 0)
+                    {
+                        this.y = Crafty.viewport._height;
+                    }
+                  });
+                
+            var collectable = Crafty.e("2D, Canvas, collectable, Collision")
+                .attr({x:(50 + (Crafty.viewport._width - 100))*Math.random(), y:(50 + (Crafty.viewport._height - 100))*Math.random()})
+                .onHit('Player1', function(hitData) {
+                    //award score
+                    player1Score++;
+                    scorePlayer1Text.text("Green: "+player1Score);
+                    
+                    //position collectable in new random place
+                    this.x = (50 + (Crafty.viewport._width - 100))*Math.random();
+                    this.y = (50 + (Crafty.viewport._height - 100))*Math.random();
+                    
+                    //check for winner
+                    if(player1Score >= 10 || player2Score >= 10 || player3Score >= 10)
+                    {
+                        Crafty.enterScene("hostWinScene", roomID);
+                    }
+                })
+                .onHit('Player2', function(hitData) {
+                    //award score
+                    player2Score++;
+                    scorePlayer2Text.text("Blue: "+player2Score);
+                    
+                    //position collectable in new random place
+                    this.x = (50 + (Crafty.viewport._width - 100))*Math.random();
+                    this.y = (50 + (Crafty.viewport._height - 100))*Math.random();
+                    
+                    //check for winner
+                    if(player1Score >= 10 || player2Score >= 10 || player3Score >= 10)
+                    {
+                        Crafty.enterScene("hostWinScene", roomID);
+                    }
+                })
+                .onHit('Player3', function(hitData) {
+                    //award score
+                    player3Score++;
+                    scorePlayer3Text.text("Red: "+player3Score);
+                    
+                    //position collectable in new random place
+                    this.x = (50 + (Crafty.viewport._width - 100))*Math.random();
+                    this.y = (50 + (Crafty.viewport._height - 100))*Math.random();
+                    
+                    //check for winner
+                    if(player1Score >= 10 || player2Score >= 10 || player3Score >= 10)
+                    {
+                        Crafty.enterScene("hostWinScene", roomID);
+                    }
+                });
+            
+            socket.on('relayingPlayerTouchStart', function (data) {
+                switch(data.pos)
+                {
+                    case 1:
+                        player1Turning = true;
+                        break;
+                    case 2:
+                        player2Turning = true;
+                        break;
+                    case 3:
+                        player3Turning = true;
+                        break;
+                }
+            });
+            
+            socket.on('relayingPlayerTouchEnd', function (data) {
+                switch(data.pos)
+                {
+                    case 1:
+                        player1Turning = false;
+                        break;
+                    case 2:
+                        player2Turning = false;
+                        break;
+                    case 3:
+                        player3Turning = false;
+                        break;
+                }
+            });
+            
+            /*
+            var player = Crafty.e("2D, Canvas, Image, Fourway")
+                .attr({x:100, y:100, w:50, h:50})
+                .image("/cat.jpg")
+                .fourway(3);
+            
+            socket.on('relayingPlayerTouchStart', function (data) {
+                if(data.pos == 1)
+                {
+                    player.x = 0;
+                    player.y = 100;
+                }
+                else if(data.pos == 2)
+                {
+                    player.x = 100;
+                    player.y = 100;
+                }
+            });
+            
+            socket.on('relayingPlayerTouchEnd', function (data) {
+                if(data.pos == 1)
+                {
+                    player.x = 0;
+                    player.y = 0;
+                }
+                else if(data.pos == 2)
+                {
+                    player.x = 100;
+                    player.y = 0;
+                }
+            });
+            */
+        }
+        
+        function initHostWinScreen()
+        {
+            var scorePlayer1Text = Crafty.e("2D, Canvas, Text").attr({ x: Crafty.viewport._width*0.5, y: Crafty.viewport._height*0.25 })
+            .text("Green: "+player1Score)
+            .textColor('#00FF00')
+            .textFont({ size: '40px', weight: 'bold' });
+            
+            var scorePlayer2Text = Crafty.e("2D, Canvas, Text").attr({ x: Crafty.viewport._width*0.5, y: Crafty.viewport._height*0.5 })
+            .text("Blue: "+player2Score)
+            .textColor('#0022FF')
+            .textFont({ size: '40px', weight: 'bold' });
+            
+            var scorePlayer3Text = Crafty.e("2D, Canvas, Text").attr({ x: Crafty.viewport._width*0.5, y: Crafty.viewport._height*0.75 })
+            .text("Red: "+player3Score)
+            .textColor('#FF0000')
+            .textFont({ size: '40px', weight: 'bold' });
+            
+            scorePlayer1Text.requires('Keyboard').bind('KeyDown', function () {
+                player1Score = 0;
+                player2Score = 0;
+                player3Score = 0;
+                
+                player1Turning = false;
+                player2Turning = false;
+                player3Turning = false;
+                
+                player1Angle = 0;
+                player2Angle = 0;
+                player3Angle = 0;
+                
+                //initialise the host game scene
+                Crafty.enterScene("hostGameScene", roomID);
+            });
+        }
+        
+        /****************/
+        /*    client    */
+        /****************/
+        
+        function initClientRoomScreen(rid)
+        {
+            var roomIDText = Crafty.e("2D, Canvas, Text").attr({ x: 0, y: 0 })
+            .text(roomID)
+            .textFont({ size: '20px', weight: 'bold' });
+            
+            var waitingText = Crafty.e("2D, Canvas, Text").attr({ x: 100, y: 100 })
+            .text("Waiting for other players...")
+            .textFont({ size: '20px', weight: 'bold' });
+        }
+        
+        function initClientGameScreen(rid)
+        {
+            Crafty.background("#C3C3C3");
+            switch(playerPos)
+            {
+                case 1:
+                    //main button
+                    var button = Crafty.e("2D, Canvas, button_green_up, Mouse")
+                        .attr({x:Crafty.viewport._x + Crafty.viewport._width*0.5 - 320, y:Crafty.viewport._height*0.5 - 320})
+                        .bind('MouseDown', function(){
+                            this.sprite(1, 0);
+                            relayPlayerTouchStart();
+                        })
+                        .bind('MouseUp', function(){
+                            this.sprite(0, 0);
+                            relayPlayerTouchEnd();
+                        });
+                    break;
+                case 2:
+                    //main button
+                    var button = Crafty.e("2D, Canvas, button_blue_up, Mouse")
+                        .attr({x:Crafty.viewport._x + Crafty.viewport._width*0.5 - 320, y:Crafty.viewport._height*0.5 - 320})
+                        .bind('MouseDown', function(){
+                            this.sprite(1, 1);
+                            relayPlayerTouchStart();
+                        })
+                        .bind('MouseUp', function(){
+                            this.sprite(0, 1);
+                            relayPlayerTouchEnd();
+                        });
+                    break;
+                case 3:
+                    //main button
+                    var button = Crafty.e("2D, Canvas, button_red_up, Mouse")
+                        .attr({x:Crafty.viewport._x + Crafty.viewport._width*0.5 - 320, y:Crafty.viewport._height*0.5 - 320})
+                        .bind('MouseDown', function(){
+                            this.sprite(1, 2);
+                            relayPlayerTouchStart();
+                        })
+                        .bind('MouseUp', function(){
+                            this.sprite(0, 2);
+                            relayPlayerTouchEnd();
+                        });
+                    break;
+            }
+            
+
+        }
+        
+        function relayPlayerTouchStart()
+        {
+            socket.emit('relayPlayerTouchStart', {rid: roomID, pos: playerPos});
+        }
+        
+        function relayPlayerTouchEnd()
+        {
+            socket.emit('relayPlayerTouchEnd', {rid: roomID, pos: playerPos});
+        }
+        
+    </script>
+  </body>
+<html>
