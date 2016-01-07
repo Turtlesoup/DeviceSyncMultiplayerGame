@@ -1,11 +1,9 @@
 var express = require('express');
-var cors = require('cors')
 var io = require('socket.io');
 var fs = require('fs');
 
 var app = express();
 app.use(express.static('public'));
-app.use(cors());
 
 var server = app.listen(process.env.PORT);
 var ios = io.listen(server);
