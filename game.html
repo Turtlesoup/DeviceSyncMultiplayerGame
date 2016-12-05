@@ -213,6 +213,10 @@
             .text("connected players: "+(playerIDs.length - 1).toString()+" / 3")
             .textFont({ size: '20px', weight: 'bold' });
             
+            var instructionsText = Crafty.e("2D, Canvas, Text").attr({ x: 100, y: 200 })
+            .text("Press space to start game")
+            .textFont({ size: '20px', weight: 'bold' });
+            
             playerCountText.requires('Keyboard').bind('KeyDown', function () {
                 if(playerIDs.length >= 2)
                 {
